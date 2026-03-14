@@ -18,7 +18,7 @@ ESPHome configurations for ESP32-S3 touchscreen displays running a Home Assistan
 
 This repo contains two configurations for different hardware:
 
-### 1. Elecrow CrowPanel 5.0" (`Crowpanel_esp32_5_inch.yaml`)
+### 1. [Elecrow CrowPanel 5.0"](https://www.aliexpress.com/item/1005006001402750.html) (`Crowpanel_esp32_5_inch.yaml`)
 
 | | |
 |---|---|
@@ -30,16 +30,13 @@ This repo contains two configurations for different hardware:
 | **Background Size** | 800×480 |
 | **Album Art Size** | 130×130 |
 
-![CrowPanel Climate Page](images/crowpanel_climate.jpg)
-<!-- Replace with a screenshot of the CrowPanel climate page -->
+![CrowPanel Climate Page](images/crowpanel_climate.JPG)
 
-![CrowPanel Music Page](images/crowpanel_music.jpg)
-<!-- Replace with a screenshot of the CrowPanel music page -->
+![CrowPanel Music Page](images/crowpanel_music.JPG)
 
-![CrowPanel Lights Page](images/crowpanel_lights.jpg)
-<!-- Replace with a screenshot of the CrowPanel lights page -->
+![CrowPanel Lights Page](images/crowpanel_lights.JPG)
 
-### 2. Guition JC3248W535 3.5" (`Guition_JC3248W535_3.5_inch_ESP32.yaml`)
+### 2. [Guition JC3248W535 3.5"](https://www.aliexpress.com/item/1005010587834753.html) (`Guition_JC3248W535_3.5_inch_ESP32.yaml`)
 
 | | |
 |---|---|
