@@ -51,14 +51,13 @@ This repo contains two configurations for different hardware:
 | **Background Size** | 320×480 |
 | **Album Art Size** | 320×320 (used as music page background) |
 
-![Guition Climate Page](images/guition_climate.jpg)
-<!-- Replace with a screenshot of the Guition climate page -->
+![Guition Climate Page](images/climate.png)
 
-![Guition Music Page](images/guition_music.jpg)
-<!-- Replace with a screenshot of the Guition music page -->
+![Guition Music Page](images/music.png)
 
-![Guition Lights Page](images/guition_lights.jpg)
-<!-- Replace with a screenshot of the Guition lights page -->
+![Guition Lights Page](images/lights.png)
+
+![Guition Screensaver](images/clock.png)
 
 ### Key Differences
 
