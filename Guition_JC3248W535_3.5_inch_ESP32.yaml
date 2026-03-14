@@ -1,5 +1,5 @@
 # =============================================================================
-# ESPHome Configuration — WaveShare ESP32-S3 Touch LCD 3.5B (320×480 portrait)
+# ESPHome Configuration — Guition JC3248W535 3.5" ESP32-S3 (320×480 portrait)
 # Lights + Music (SpotifyPlus) + Climate panel with album art, background image,
 # screensaver and screen-sleep.
 #
@@ -13,9 +13,9 @@ substitutions:
   # ---------------------------------------------------------------------------
   # Device identity
   # ---------------------------------------------------------------------------
-  device_name:          "waveshare-esp32-s3-touch"
-  friendly_name:        "WaveShare ESP32-S3 Touch LCD 3.5B"
-  fallback_ap_ssid:     "Waveshare-ESP32-S3-3.5B Fallback"
+  device_name:          "guition-jc3248w535"
+  friendly_name:        "Guition JC3248W535 3.5\""
+  fallback_ap_ssid:     "Guition-JC3248W535 Fallback"
 
   # ---------------------------------------------------------------------------
   # Home Assistant base URL
@@ -173,7 +173,7 @@ wifi:
 captive_portal:
 
 # -----------------------------------------------------------------------------
-# WaveShare 3.5B — QSPI display + AXS15231 capacitive touch
+# Guition JC3248W535 — QSPI display + AXS15231 capacitive touch
 # -----------------------------------------------------------------------------
 spi:
   id: display_qspi
