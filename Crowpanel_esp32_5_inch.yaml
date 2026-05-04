@@ -70,25 +70,24 @@ substitutions:
   light_4_label:    "Kitchen"
 
   # ---------------------------------------------------------------------------
-  # Playlist buttons (6 × Spotify URI or any media_content_id)
+  # Playlist & Radio browsers — driven dynamically from Home Assistant
+  #
+  # In HA you must define (see README):
+  #   - input_select.crowpanel_playlists  (options = friendly names)
+  #   - input_select.crowpanel_radios     (options = friendly names)
+  #   - sensor.crowpanel_playlist_names   (template, joins options with '|')
+  #   - sensor.crowpanel_radio_names      (template, joins options with '|')
+  #   - script.crowpanel_play_playlist    (field: name → looks up URI, plays)
+  #   - script.crowpanel_play_radio       (field: name → looks up URI, plays)
+  #
+  # The panel shows up to 6 entries from each input_select; reorder/edit
+  # them in HA to change what appears here, no reflash required.
   # ---------------------------------------------------------------------------
-  playlist_1_label:   "Favourites"
-  playlist_1_uri:     "spotify:playlist:1NY1ZsQPf1R8gwBQZx1jIG"
+  playlist_names_sensor:  "sensor.crowpanel_playlist_names"
+  playlist_play_script:   "script.crowpanel_play_playlist"
 
-  playlist_2_label:   "Chill Out"
-  playlist_2_uri:     "spotify:playlist:4530EUiHb3H3OVxaOGRIan"
-
-  playlist_3_label:   "80s"
-  playlist_3_uri:     "spotify:playlist:4CJaBASVuHNLT4XJ5l5Y3Y"
-
-  playlist_4_label:   "90s"
-  playlist_4_uri:     "spotify:playlist:37i9dQZF1EQn2GRFTFMl2A"
-
-  playlist_5_label:   "Coldplay"
-  playlist_5_uri:     "spotify:playlist:37i9dQZF1DXaQm3ZVg9Z2X"
-
-  playlist_6_label:   "Trip Hop"
-  playlist_6_uri:     "spotify:playlist:732Y3vA0pCj2In4F5aGXjQ"
+  radio_names_sensor:     "sensor.crowpanel_radio_names"
+  radio_play_script:      "script.crowpanel_play_radio"
 
   # ---------------------------------------------------------------------------
   # Screensaver / sleep timings
@@ -277,6 +276,64 @@ text_sensor:
               return url;
         - component.update: album_art
 
+  # Pipe-delimited playlist names from HA (e.g. "Favourites|Chill Out|80s|...")
+  - platform: homeassistant
+    id: playlist_names
+    entity_id: ${playlist_names_sensor}
+    on_value:
+      then:
+        - lambda: |-
+            std::string s = x;
+            std::vector<std::string> names;
+            size_t pos;
+            while ((pos = s.find('|')) != std::string::npos) {
+              names.push_back(s.substr(0, pos));
+              s.erase(0, pos + 1);
+            }
+            if (!s.empty()) names.push_back(s);
+
+            lv_obj_t* btns[6] = {id(playlist_btn_1), id(playlist_btn_2), id(playlist_btn_3),
+                                 id(playlist_btn_4), id(playlist_btn_5), id(playlist_btn_6)};
+            lv_obj_t* lbls[6] = {id(playlist_lbl_1), id(playlist_lbl_2), id(playlist_lbl_3),
+                                 id(playlist_lbl_4), id(playlist_lbl_5), id(playlist_lbl_6)};
+            for (int i = 0; i < 6; i++) {
+              if (i < (int)names.size()) {
+                lv_label_set_text(lbls[i], names[i].c_str());
+                lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+              } else {
+                lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+              }
+            }
+
+  # Pipe-delimited radio station names from HA
+  - platform: homeassistant
+    id: radio_names
+    entity_id: ${radio_names_sensor}
+    on_value:
+      then:
+        - lambda: |-
+            std::string s = x;
+            std::vector<std::string> names;
+            size_t pos;
+            while ((pos = s.find('|')) != std::string::npos) {
+              names.push_back(s.substr(0, pos));
+              s.erase(0, pos + 1);
+            }
+            if (!s.empty()) names.push_back(s);
+
+            lv_obj_t* btns[6] = {id(radio_btn_1), id(radio_btn_2), id(radio_btn_3),
+                                 id(radio_btn_4), id(radio_btn_5), id(radio_btn_6)};
+            lv_obj_t* lbls[6] = {id(radio_lbl_1), id(radio_lbl_2), id(radio_lbl_3),
+                                 id(radio_lbl_4), id(radio_lbl_5), id(radio_lbl_6)};
+            for (int i = 0; i < 6; i++) {
+              if (i < (int)names.size()) {
+                lv_label_set_text(lbls[i], names[i].c_str());
+                lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+              } else {
+                lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+              }
+            }
+
 # =============================================================================
 # Binary Sensors — light states, boost indicator, mute state
 # =============================================================================
@@ -398,6 +455,10 @@ online_image:
           src: bg_image
       - delay: 500ms
       - lvgl.image.update:
+          id: bg_image_radio
+          src: bg_image
+      - delay: 500ms
+      - lvgl.image.update:
           id: bg_image_lights
           src: bg_image
 
@@ -501,7 +562,7 @@ lvgl:
                 text_color: 0xFFFFFF
 
             - button:
-                x: 510
+                x: 330
                 y: 8
                 width: 80
                 height: 44
@@ -520,7 +581,7 @@ lvgl:
                   - lvgl.page.show: page_climate
 
             - button:
-                x: 600
+                x: 420
                 y: 8
                 width: 80
                 height: 44
@@ -539,7 +600,26 @@ lvgl:
                   - lvgl.page.show: page_music
 
             - button:
-                x: 690
+                x: 510
+                y: 8
+                width: 80
+                height: 44
+                bg_color: 0xE91E63
+                radius: 4
+                widgets:
+                  - label:
+                      text: "Radio"
+                      text_font: roboto18
+                      text_color: 0xFFFFFF
+                      align: CENTER
+                on_click:
+                  - globals.set:
+                      id: last_page
+                      value: "3"
+                  - lvgl.page.show: page_radio
+
+            - button:
+                x: 600
                 y: 8
                 width: 80
                 height: 44
@@ -854,8 +934,9 @@ lvgl:
                   data:
                     entity_id: ${media_player_entity}
 
-        # ── Playlist rows ──────────────────────────────────────────────────
+        # ── Playlist browser (dynamic, 6 slots from HA input_select) ───────
         - button:
+            id: playlist_btn_1
             x: 20
             y: 310
             width: 370
@@ -863,22 +944,26 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_1_label}
+                  id: playlist_lbl_1
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_1_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_1)));
 
         - button:
+            id: playlist_btn_2
             x: 410
             y: 310
             width: 370
@@ -886,22 +971,26 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_2_label}
+                  id: playlist_lbl_2
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_2_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_2)));
 
         - button:
+            id: playlist_btn_3
             x: 20
             y: 365
             width: 370
@@ -909,22 +998,26 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_3_label}
+                  id: playlist_lbl_3
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_3_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_3)));
 
         - button:
+            id: playlist_btn_4
             x: 410
             y: 365
             width: 370
@@ -932,22 +1025,26 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_4_label}
+                  id: playlist_lbl_4
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_4_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_4)));
 
         - button:
+            id: playlist_btn_5
             x: 20
             y: 420
             width: 370
@@ -955,22 +1052,26 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_5_label}
+                  id: playlist_lbl_5
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_5_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_5)));
 
         - button:
+            id: playlist_btn_6
             x: 410
             y: 420
             width: 370
@@ -978,20 +1079,201 @@ lvgl:
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
+            hidden: true
             widgets:
               - label:
-                  text: ${playlist_6_label}
+                  id: playlist_lbl_6
+                  text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
                   align: LEFT_MID
                   x: 10
+                  long_mode: DOT
+                  width: 350
             on_click:
               - homeassistant.action:
-                  action: media_player.play_media
-                  data:
-                    entity_id: ${media_player_entity}
-                    media_content_id: ${playlist_6_uri}
-                    media_content_type: "playlist"
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_6)));
+
+    # =========================================================================
+    # RADIO PAGE — dynamic browser (6 slots from HA input_select)
+    # =========================================================================
+    - id: page_radio
+      bg_color: 0x0A0E2A
+      bg_opa: COVER
+      widgets:
+        - image:
+            id: bg_image_radio
+            src: bg_image
+            x: 0
+            y: 0
+            align: TOP_LEFT
+
+        - label:
+            text: "Radio Stations"
+            align: TOP_LEFT
+            x: 20
+            y: 80
+            text_font: roboto30
+            text_color: 0xFFFFFF
+
+        - button:
+            id: radio_btn_1
+            x: 20
+            y: 140
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_1
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_1)));
+
+        - button:
+            id: radio_btn_2
+            x: 410
+            y: 140
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_2
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_2)));
+
+        - button:
+            id: radio_btn_3
+            x: 20
+            y: 240
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_3
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_3)));
+
+        - button:
+            id: radio_btn_4
+            x: 410
+            y: 240
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_4
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_4)));
+
+        - button:
+            id: radio_btn_5
+            x: 20
+            y: 340
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_5
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_5)));
+
+        - button:
+            id: radio_btn_6
+            x: 410
+            y: 340
+            width: 370
+            height: 90
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_6
+                  text: ""
+                  align: CENTER
+                  text_font: roboto24
+                  text_color: 0xFFFFFF
+                  long_mode: DOT
+                  width: 350
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_6)));
 
     # =========================================================================
     # LIGHTS PAGE
@@ -1175,6 +1457,11 @@ lvgl:
                     lambda: "return id(last_page) == 2;"
                   then:
                     - lvgl.page.show: page_lights
+              - if:
+                  condition:
+                    lambda: "return id(last_page) == 3;"
+                  then:
+                    - lvgl.page.show: page_radio
 
 # =============================================================================
 # Fonts — local Roboto files in fonts/ folder + MDI webfont
