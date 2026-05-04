@@ -1,14 +1,16 @@
 # ESPHome Home Control Panels
 
-ESPHome configurations for ESP32-S3 touchscreen displays running a Home Assistant control panel with **climate**, **music** (Spotify), and **lighting** pages — plus screensaver and auto-sleep.
+ESPHome configurations for ESP32-S3 touchscreen displays running a Home Assistant control panel with **climate**, **music** (Spotify), **radio** (HLS streams), and **lighting** pages — plus screensaver and auto-sleep.
 
-
+> **Setting up Home Assistant?** See **[HOME_ASSISTANT_SETUP.md](HOME_ASSISTANT_SETUP.md)** for the full HA-side configuration: required entities, the `input_select` helpers / template sensors / scripts that drive the dynamic playlist & radio browsers, Spotify integration notes, and a troubleshooting table.
 
 ## Features
 
 - **Climate Control** — current & target temperature, +/- adjustment, boost toggle
-- **Music Player** — play/pause, skip, volume, mute, album art, 6 configurable playlist buttons
+- **Music Player** — play/pause, skip, volume, mute, album art, dynamic playlist browser
+- **Radio** *(CrowPanel only)* — dynamic browser for HLS / streaming radio stations (e.g. BBC) on Sonos
 - **Lighting** — 4 togglable light buttons with live on/off state
+- **Dynamic browsers** *(CrowPanel only)* — playlist and radio slots are populated from HA `input_select` helpers, so you can reorder/rename/replace entries without reflashing
 - **Screensaver** — large clock on black background after configurable idle timeout
 - **Auto-sleep** — backlight turns off after extended idle period
 - **Custom background** — loads a JPEG from your Home Assistant `www/` folder at boot
@@ -89,7 +91,8 @@ This repo contains two configurations for different hardware:
    fallback_ap_password: "your-fallback-password"
    ```
 5. Edit the `substitutions` block at the top of the YAML to match your Home Assistant entity IDs, Spotify playlist URIs, and preferences.
-6. Flash via ESPHome Dashboard or CLI:
+6. Configure the Home Assistant side — entities, helpers, scripts, and (for the CrowPanel) the dynamic playlist/radio browsers. See **[HOME_ASSISTANT_SETUP.md](HOME_ASSISTANT_SETUP.md)** for step-by-step instructions.
+7. Flash via ESPHome Dashboard or CLI:
    ```bash
    esphome run Crowpanel_esp32_5_inch.yaml
    ```

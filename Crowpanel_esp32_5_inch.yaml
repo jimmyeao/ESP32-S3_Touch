@@ -89,6 +89,10 @@ substitutions:
   radio_names_sensor:     "sensor.crowpanel_radio_names"
   radio_play_script:      "script.crowpanel_play_radio"
 
+  # Now-playing art — HA template sensor that returns either a station
+  # logo (for radio) or entity_picture (for everything else).
+  now_playing_art_sensor: "sensor.crowpanel_now_playing_art"
+
   # ---------------------------------------------------------------------------
   # Screensaver / sleep timings
   # ---------------------------------------------------------------------------
@@ -188,6 +192,12 @@ globals:
   - id: last_page
     type: int
     initial_value: "0"
+  - id: radio_page_idx
+    type: int
+    initial_value: "0"
+  - id: playlist_page_idx
+    type: int
+    initial_value: "0"
 
 # =============================================================================
 # Time
@@ -240,8 +250,12 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
-            lv_label_set_text(id(music_state_label), x == "playing" ? "Now Playing" : "Stopped");
-            lv_label_set_text(id(music_play_label), x == "playing" ? "\U000F03E4" : "\U000F040A");
+            const char* state_text = x == "playing" ? "Now Playing" : "Stopped";
+            const char* play_icon  = x == "playing" ? "\U000F03E4" : "\U000F040A";
+            lv_label_set_text(id(music_state_label), state_text);
+            lv_label_set_text(id(radio_state_label), state_text);
+            lv_label_set_text(id(music_play_label), play_icon);
+            lv_label_set_text(id(radio_play_label), play_icon);
 
   - platform: homeassistant
     id: media_player_title
@@ -249,7 +263,9 @@ text_sensor:
     attribute: media_title
     on_value:
       then:
-        - lambda: lv_label_set_text(id(music_title_label), x.c_str());
+        - lambda: |-
+            lv_label_set_text(id(music_title_label), x.c_str());
+            lv_label_set_text(id(radio_title_label), x.c_str());
 
   - platform: homeassistant
     id: media_player_artist
@@ -257,82 +273,52 @@ text_sensor:
     attribute: media_artist
     on_value:
       then:
-        - lambda: lv_label_set_text(id(music_artist_label), x.c_str());
+        - lambda: |-
+            lv_label_set_text(id(music_artist_label), x.c_str());
+            lv_label_set_text(id(radio_artist_label), x.c_str());
 
+  # Now-playing art — driven by HA template sensor that maps current
+  # media_content_id to a station logo for radio, or falls back to
+  # the media_player's entity_picture for everything else.
+  # Skips the download when the sensor is empty/unknown so we don't
+  # hammer flaky HTTPS placeholders during idle.
   - platform: homeassistant
-    id: media_player_art_url
-    entity_id: ${media_player_entity}
-    attribute: entity_picture
+    id: now_playing_art
+    entity_id: ${now_playing_art_sensor}
     on_value:
       then:
-        # Prefix relative paths with the HA base URL
-        - online_image.set_url:
-            id: album_art
-            url: !lambda |-
-              std::string url = id(media_player_art_url).state;
-              if (url.find("http") != 0) {
-                return std::string("${ha_base_url}") + url;
-              }
-              return url;
-        - component.update: album_art
+        - lambda: 'ESP_LOGI("art", "now_playing_art = %s", x.c_str());'
+        - if:
+            condition:
+              lambda: 'return !x.empty() && x != "unknown" && x != "unavailable";'
+            then:
+              - online_image.set_url:
+                  id: album_art
+                  url: !lambda |-
+                    std::string url = id(now_playing_art).state;
+                    if (url.find("http") != 0) {
+                      return std::string("${ha_base_url}") + url;
+                    }
+                    return url;
+              - component.update: album_art
 
-  # Pipe-delimited playlist names from HA (e.g. "Favourites|Chill Out|80s|...")
+  # Pipe-delimited playlist names from HA — re-renders the adaptive
+  # / paged layout via the playlist_render script.
   - platform: homeassistant
     id: playlist_names
     entity_id: ${playlist_names_sensor}
     on_value:
       then:
-        - lambda: |-
-            std::string s = x;
-            std::vector<std::string> names;
-            size_t pos;
-            while ((pos = s.find('|')) != std::string::npos) {
-              names.push_back(s.substr(0, pos));
-              s.erase(0, pos + 1);
-            }
-            if (!s.empty()) names.push_back(s);
+        - script.execute: playlist_render
 
-            lv_obj_t* btns[6] = {id(playlist_btn_1), id(playlist_btn_2), id(playlist_btn_3),
-                                 id(playlist_btn_4), id(playlist_btn_5), id(playlist_btn_6)};
-            lv_obj_t* lbls[6] = {id(playlist_lbl_1), id(playlist_lbl_2), id(playlist_lbl_3),
-                                 id(playlist_lbl_4), id(playlist_lbl_5), id(playlist_lbl_6)};
-            for (int i = 0; i < 6; i++) {
-              if (i < (int)names.size()) {
-                lv_label_set_text(lbls[i], names[i].c_str());
-                lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
-              } else {
-                lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
-              }
-            }
-
-  # Pipe-delimited radio station names from HA
+  # Pipe-delimited radio station names from HA — re-renders the adaptive
+  # / paged layout via the radio_render script (see script: section).
   - platform: homeassistant
     id: radio_names
     entity_id: ${radio_names_sensor}
     on_value:
       then:
-        - lambda: |-
-            std::string s = x;
-            std::vector<std::string> names;
-            size_t pos;
-            while ((pos = s.find('|')) != std::string::npos) {
-              names.push_back(s.substr(0, pos));
-              s.erase(0, pos + 1);
-            }
-            if (!s.empty()) names.push_back(s);
-
-            lv_obj_t* btns[6] = {id(radio_btn_1), id(radio_btn_2), id(radio_btn_3),
-                                 id(radio_btn_4), id(radio_btn_5), id(radio_btn_6)};
-            lv_obj_t* lbls[6] = {id(radio_lbl_1), id(radio_lbl_2), id(radio_lbl_3),
-                                 id(radio_lbl_4), id(radio_lbl_5), id(radio_lbl_6)};
-            for (int i = 0; i < 6; i++) {
-              if (i < (int)names.size()) {
-                lv_label_set_text(lbls[i], names[i].c_str());
-                lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
-              } else {
-                lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
-              }
-            }
+        - script.execute: radio_render
 
 # =============================================================================
 # Binary Sensors — light states, boost indicator, mute state
@@ -353,7 +339,9 @@ binary_sensor:
     on_state:
       then:
         - lambda: |-
-            lv_obj_set_style_bg_color(id(mute_button), lv_color_hex(x ? 0xB71C1C : 0x1A237E), 0);
+            lv_color_t c = lv_color_hex(x ? 0xB71C1C : 0x1A237E);
+            lv_obj_set_style_bg_color(id(mute_button), c, 0);
+            lv_obj_set_style_bg_color(id(mute_button_radio), c, 0);
 
   - platform: homeassistant
     id: light_1
@@ -390,6 +378,214 @@ binary_sensor:
         - lambda: |-
             lv_label_set_text(id(light4_status), x ? "ON" : "OFF");
             lv_obj_set_style_bg_color(id(light4_button), lv_color_hex(x ? 0xFFC107 : 0x1A237E), 0);
+
+# =============================================================================
+# Scripts — radio + playlist browser renderers (adaptive layout + paging)
+#
+# Each script reads its pipe-delimited names sensor, slices by its page
+# global into pages of up to 9, and positions 9 button slots in an
+# adaptive grid:
+#   1 → centered        4 → 2x2          7 → 3+3+1 centered
+#   2 → 1 row 2 cols    5 → 3+2 centered 8 → 3+3+2 centered
+#   3 → 1 row 3 cols    6 → 3x2          9 → 3x3
+# Paging buttons appear only when total > 9.
+# =============================================================================
+script:
+  - id: radio_render
+    then:
+      - lambda: |-
+          std::string s = id(radio_names).state;
+          std::vector<std::string> names;
+          size_t pos;
+          while ((pos = s.find('|')) != std::string::npos) {
+            names.push_back(s.substr(0, pos));
+            s.erase(0, pos + 1);
+          }
+          if (!s.empty()) names.push_back(s);
+
+          const int PER_PAGE = 9;
+          int total = (int)names.size();
+          int total_pages = total > 0 ? (total + PER_PAGE - 1) / PER_PAGE : 1;
+
+          int page = id(radio_page_idx);
+          if (page < 0) page = 0;
+          if (page >= total_pages) page = total_pages - 1;
+          if (page < 0) page = 0;
+          id(radio_page_idx) = page;
+
+          int start = page * PER_PAGE;
+          int end_idx = std::min(total, start + PER_PAGE);
+          int n = end_idx - start;
+          if (n < 0) n = 0;
+
+          lv_obj_t* btns[9] = {
+            id(radio_btn_1), id(radio_btn_2), id(radio_btn_3),
+            id(radio_btn_4), id(radio_btn_5), id(radio_btn_6),
+            id(radio_btn_7), id(radio_btn_8), id(radio_btn_9)};
+          lv_obj_t* lbls[9] = {
+            id(radio_lbl_1), id(radio_lbl_2), id(radio_lbl_3),
+            id(radio_lbl_4), id(radio_lbl_5), id(radio_lbl_6),
+            id(radio_lbl_7), id(radio_lbl_8), id(radio_lbl_9)};
+
+          const int Y_TOP = 220;
+          const int H_AVAIL = 215;
+          const int W_PAGE = 800;
+          const int GAP = 10;
+
+          int rows = 0;
+          int cols_per_row[3] = {0, 0, 0};
+          int btn_w = 246, btn_h = 60;
+
+          if (n == 1)      { rows = 1; cols_per_row[0] = 1; btn_w = 370; }
+          else if (n == 2) { rows = 1; cols_per_row[0] = 2; btn_w = 370; }
+          else if (n == 3) { rows = 1; cols_per_row[0] = 3; btn_w = 246; }
+          else if (n == 4) { rows = 2; cols_per_row[0] = 2; cols_per_row[1] = 2; btn_w = 370; }
+          else if (n == 5) { rows = 2; cols_per_row[0] = 3; cols_per_row[1] = 2; btn_w = 246; }
+          else if (n == 6) { rows = 2; cols_per_row[0] = 3; cols_per_row[1] = 3; btn_w = 246; }
+          else if (n == 7) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 1; btn_w = 246; }
+          else if (n == 8) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 2; btn_w = 246; }
+          else if (n >= 9) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 3; btn_w = 246; }
+
+          int total_h = rows > 0 ? rows * btn_h + (rows - 1) * GAP : 0;
+          int y_start = Y_TOP + (H_AVAIL - total_h) / 2;
+
+          for (int i = 0; i < 9; i++) {
+            if (i < n) {
+              int row = 0, col_in_row = i, cumsum = 0;
+              for (int r = 0; r < rows; r++) {
+                if (i < cumsum + cols_per_row[r]) {
+                  row = r;
+                  col_in_row = i - cumsum;
+                  break;
+                }
+                cumsum += cols_per_row[r];
+              }
+              int cols_this = cols_per_row[row];
+              int row_total_w = cols_this * btn_w + (cols_this - 1) * GAP;
+              int row_x_start = (W_PAGE - row_total_w) / 2;
+              int x_pos = row_x_start + col_in_row * (btn_w + GAP);
+              int y_pos = y_start + row * (btn_h + GAP);
+
+              lv_obj_set_pos(btns[i], x_pos, y_pos);
+              lv_obj_set_size(btns[i], btn_w, btn_h);
+              lv_obj_set_width(lbls[i], btn_w - 20);
+              lv_label_set_text(lbls[i], names[start + i].c_str());
+              lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+            }
+          }
+
+          if (total > PER_PAGE) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%d / %d", page + 1, total_pages);
+            lv_label_set_text(id(radio_page_label), buf);
+            lv_obj_clear_flag(id(radio_prev_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(radio_next_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(radio_page_label), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(radio_prev_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(radio_next_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(radio_page_label), LV_OBJ_FLAG_HIDDEN);
+          }
+
+  - id: playlist_render
+    then:
+      - lambda: |-
+          std::string s = id(playlist_names).state;
+          std::vector<std::string> names;
+          size_t pos;
+          while ((pos = s.find('|')) != std::string::npos) {
+            names.push_back(s.substr(0, pos));
+            s.erase(0, pos + 1);
+          }
+          if (!s.empty()) names.push_back(s);
+
+          const int PER_PAGE = 9;
+          int total = (int)names.size();
+          int total_pages = total > 0 ? (total + PER_PAGE - 1) / PER_PAGE : 1;
+
+          int page = id(playlist_page_idx);
+          if (page < 0) page = 0;
+          if (page >= total_pages) page = total_pages - 1;
+          if (page < 0) page = 0;
+          id(playlist_page_idx) = page;
+
+          int start = page * PER_PAGE;
+          int end_idx = std::min(total, start + PER_PAGE);
+          int n = end_idx - start;
+          if (n < 0) n = 0;
+
+          lv_obj_t* btns[9] = {
+            id(playlist_btn_1), id(playlist_btn_2), id(playlist_btn_3),
+            id(playlist_btn_4), id(playlist_btn_5), id(playlist_btn_6),
+            id(playlist_btn_7), id(playlist_btn_8), id(playlist_btn_9)};
+          lv_obj_t* lbls[9] = {
+            id(playlist_lbl_1), id(playlist_lbl_2), id(playlist_lbl_3),
+            id(playlist_lbl_4), id(playlist_lbl_5), id(playlist_lbl_6),
+            id(playlist_lbl_7), id(playlist_lbl_8), id(playlist_lbl_9)};
+
+          const int Y_TOP = 220;
+          const int H_AVAIL = 215;
+          const int W_PAGE = 800;
+          const int GAP = 10;
+
+          int rows = 0;
+          int cols_per_row[3] = {0, 0, 0};
+          int btn_w = 246, btn_h = 60;
+
+          if (n == 1)      { rows = 1; cols_per_row[0] = 1; btn_w = 370; }
+          else if (n == 2) { rows = 1; cols_per_row[0] = 2; btn_w = 370; }
+          else if (n == 3) { rows = 1; cols_per_row[0] = 3; btn_w = 246; }
+          else if (n == 4) { rows = 2; cols_per_row[0] = 2; cols_per_row[1] = 2; btn_w = 370; }
+          else if (n == 5) { rows = 2; cols_per_row[0] = 3; cols_per_row[1] = 2; btn_w = 246; }
+          else if (n == 6) { rows = 2; cols_per_row[0] = 3; cols_per_row[1] = 3; btn_w = 246; }
+          else if (n == 7) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 1; btn_w = 246; }
+          else if (n == 8) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 2; btn_w = 246; }
+          else if (n >= 9) { rows = 3; cols_per_row[0] = 3; cols_per_row[1] = 3; cols_per_row[2] = 3; btn_w = 246; }
+
+          int total_h = rows > 0 ? rows * btn_h + (rows - 1) * GAP : 0;
+          int y_start = Y_TOP + (H_AVAIL - total_h) / 2;
+
+          for (int i = 0; i < 9; i++) {
+            if (i < n) {
+              int row = 0, col_in_row = i, cumsum = 0;
+              for (int r = 0; r < rows; r++) {
+                if (i < cumsum + cols_per_row[r]) {
+                  row = r;
+                  col_in_row = i - cumsum;
+                  break;
+                }
+                cumsum += cols_per_row[r];
+              }
+              int cols_this = cols_per_row[row];
+              int row_total_w = cols_this * btn_w + (cols_this - 1) * GAP;
+              int row_x_start = (W_PAGE - row_total_w) / 2;
+              int x_pos = row_x_start + col_in_row * (btn_w + GAP);
+              int y_pos = y_start + row * (btn_h + GAP);
+
+              lv_obj_set_pos(btns[i], x_pos, y_pos);
+              lv_obj_set_size(btns[i], btn_w, btn_h);
+              lv_obj_set_width(lbls[i], btn_w - 20);
+              lv_label_set_text(lbls[i], names[start + i].c_str());
+              lv_obj_clear_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+              lv_obj_add_flag(btns[i], LV_OBJ_FLAG_HIDDEN);
+            }
+          }
+
+          if (total > PER_PAGE) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%d / %d", page + 1, total_pages);
+            lv_label_set_text(id(playlist_page_label), buf);
+            lv_obj_clear_flag(id(playlist_prev_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(playlist_next_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(playlist_page_label), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(playlist_prev_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(playlist_next_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(playlist_page_label), LV_OBJ_FLAG_HIDDEN);
+          }
 
 # =============================================================================
 # Display Configuration — CrowPanel 5" RGB parallel TFT
@@ -472,6 +668,9 @@ online_image:
     on_download_finished:
       - lvgl.image.update:
           id: album_art_widget
+          src: album_art
+      - lvgl.image.update:
+          id: album_art_widget_radio
           src: album_art
 
 # =============================================================================
@@ -773,7 +972,7 @@ lvgl:
             y: 0
             align: TOP_LEFT
 
-        # Album art thumbnail
+        # ── Now playing (left): album art + state/title/artist labels ──────
         - image:
             id: album_art_widget
             src: album_art
@@ -794,9 +993,9 @@ lvgl:
             y: 108
             text_font: roboto24
             text_color: 0xFFFFFF
-            text: "No media"
+            text: ""
             long_mode: DOT
-            width: 610
+            width: 330
 
         - label:
             id: music_artist_label
@@ -806,12 +1005,12 @@ lvgl:
             text_color: 0xAAAAAA
             text: ""
             long_mode: DOT
-            width: 610
+            width: 330
 
-        # ── Transport row ──────────────────────────────────────────────────
+        # ── Controls (right): transport row top, volume row bottom ─────────
         - button:
-            x: 130
-            y: 225
+            x: 520
+            y: 80
             width: 80
             height: 56
             bg_color: 0x1A237E
@@ -830,8 +1029,8 @@ lvgl:
                     entity_id: ${media_player_entity}
 
         - button:
-            x: 230
-            y: 225
+            x: 610
+            y: 80
             width: 80
             height: 56
             bg_color: 0x4CAF50
@@ -851,8 +1050,8 @@ lvgl:
                     entity_id: ${media_player_entity}
 
         - button:
-            x: 330
-            y: 225
+            x: 700
+            y: 80
             width: 80
             height: 56
             bg_color: 0x1A237E
@@ -870,10 +1069,9 @@ lvgl:
                   data:
                     entity_id: ${media_player_entity}
 
-        # ── Volume row ─────────────────────────────────────────────────────
         - button:
-            x: 490
-            y: 225
+            x: 520
+            y: 146
             width: 80
             height: 56
             bg_color: 0x1A237E
@@ -893,8 +1091,8 @@ lvgl:
 
         - button:
             id: mute_button
-            x: 590
-            y: 225
+            x: 610
+            y: 146
             width: 80
             height: 56
             bg_color: 0x1A237E
@@ -915,8 +1113,8 @@ lvgl:
                     is_volume_muted: "{{ not state_attr('${media_player_entity}', 'is_volume_muted') }}"
 
         - button:
-            x: 690
-            y: 225
+            x: 700
+            y: 146
             width: 80
             height: 56
             bg_color: 0x1A237E
@@ -934,13 +1132,13 @@ lvgl:
                   data:
                     entity_id: ${media_player_entity}
 
-        # ── Playlist browser (dynamic, 6 slots from HA input_select) ───────
+        # ── Playlist browser (9 slots, adaptive layout from playlist_render) ─
         - button:
             id: playlist_btn_1
-            x: 20
-            y: 310
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -951,10 +1149,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -964,10 +1161,10 @@ lvgl:
 
         - button:
             id: playlist_btn_2
-            x: 410
-            y: 310
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -978,10 +1175,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -991,10 +1187,10 @@ lvgl:
 
         - button:
             id: playlist_btn_3
-            x: 20
-            y: 365
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -1005,10 +1201,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -1018,10 +1213,10 @@ lvgl:
 
         - button:
             id: playlist_btn_4
-            x: 410
-            y: 365
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -1032,10 +1227,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -1045,10 +1239,10 @@ lvgl:
 
         - button:
             id: playlist_btn_5
-            x: 20
-            y: 420
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -1059,10 +1253,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -1072,10 +1265,10 @@ lvgl:
 
         - button:
             id: playlist_btn_6
-            x: 410
-            y: 420
-            width: 370
-            height: 48
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 6
@@ -1086,10 +1279,9 @@ lvgl:
                   text: ""
                   text_font: roboto18
                   text_color: 0xFFFFFF
-                  align: LEFT_MID
-                  x: 10
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${playlist_play_script}
@@ -1097,8 +1289,141 @@ lvgl:
                     name: !lambda |-
                       return std::string(lv_label_get_text(id(playlist_lbl_6)));
 
+        - button:
+            id: playlist_btn_7
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: playlist_lbl_7
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_7)));
+
+        - button:
+            id: playlist_btn_8
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: playlist_lbl_8
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_8)));
+
+        - button:
+            id: playlist_btn_9
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: playlist_lbl_9
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${playlist_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(playlist_lbl_9)));
+
+        # ── Paging controls (visible only when total playlists > 9) ────────
+        - button:
+            id: playlist_prev_btn
+            x: 280
+            y: 445
+            width: 90
+            height: 30
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 4
+            hidden: true
+            widgets:
+              - label:
+                  text: "Prev"
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - lambda: |-
+                  if (id(playlist_page_idx) > 0) id(playlist_page_idx)--;
+              - script.execute: playlist_render
+
+        - label:
+            id: playlist_page_label
+            x: 380
+            y: 449
+            width: 80
+            text_font: roboto18
+            text_color: 0xFFFFFF
+            text: ""
+            text_align: CENTER
+            hidden: true
+
+        - button:
+            id: playlist_next_btn
+            x: 470
+            y: 445
+            width: 90
+            height: 30
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 4
+            hidden: true
+            widgets:
+              - label:
+                  text: "Next"
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - lambda: |-
+                  id(playlist_page_idx)++;
+              - script.execute: playlist_render
+
     # =========================================================================
-    # RADIO PAGE — dynamic browser (6 slots from HA input_select)
+    # RADIO PAGE — now-playing + transport + 6 dynamic station slots
+    # Mirrors the music page layout, sharing media_player metadata & art.
     # =========================================================================
     - id: page_radio
       bg_color: 0x0A0E2A
@@ -1111,33 +1436,186 @@ lvgl:
             y: 0
             align: TOP_LEFT
 
-        - label:
-            text: "Radio Stations"
-            align: TOP_LEFT
+        # ── Now playing (left): album art + state/title/artist labels ──────
+        - image:
+            id: album_art_widget_radio
+            src: album_art
             x: 20
-            y: 80
-            text_font: roboto30
-            text_color: 0xFFFFFF
+            y: 75
 
+        - label:
+            id: radio_state_label
+            x: 170
+            y: 78
+            text_font: roboto18
+            text_color: 0xAAAAAA
+            text: "Stopped"
+
+        - label:
+            id: radio_title_label
+            x: 170
+            y: 108
+            text_font: roboto24
+            text_color: 0xFFFFFF
+            text: ""
+            long_mode: DOT
+            width: 330
+
+        - label:
+            id: radio_artist_label
+            x: 170
+            y: 145
+            text_font: roboto20
+            text_color: 0xAAAAAA
+            text: ""
+            long_mode: DOT
+            width: 330
+
+        # ── Controls (right): transport row top, volume row bottom ─────────
         - button:
-            id: radio_btn_1
-            x: 20
-            y: 140
-            width: 370
-            height: 90
+            x: 520
+            y: 80
+            width: 80
+            height: 56
             bg_color: 0x1A237E
             bg_opa: 80%
             radius: 8
+            widgets:
+              - label:
+                  text: "\U000F04AE"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.media_previous_track
+                  data:
+                    entity_id: ${media_player_entity}
+
+        - button:
+            x: 610
+            y: 80
+            width: 80
+            height: 56
+            bg_color: 0x4CAF50
+            bg_opa: 80%
+            radius: 8
+            widgets:
+              - label:
+                  id: radio_play_label
+                  text: "\U000F040A"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.media_play_pause
+                  data:
+                    entity_id: ${media_player_entity}
+
+        - button:
+            x: 700
+            y: 80
+            width: 80
+            height: 56
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            widgets:
+              - label:
+                  text: "\U000F04AD"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.media_next_track
+                  data:
+                    entity_id: ${media_player_entity}
+
+        - button:
+            x: 520
+            y: 146
+            width: 80
+            height: 56
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            widgets:
+              - label:
+                  text: "\U000F075E"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.volume_down
+                  data:
+                    entity_id: ${media_player_entity}
+
+        - button:
+            id: mute_button_radio
+            x: 610
+            y: 146
+            width: 80
+            height: 56
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            widgets:
+              - label:
+                  text: "\U000F0581"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.volume_mute
+                  data:
+                    entity_id: ${media_player_entity}
+                  data_template:
+                    is_volume_muted: "{{ not state_attr('${media_player_entity}', 'is_volume_muted') }}"
+
+        - button:
+            x: 700
+            y: 146
+            width: 80
+            height: 56
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 8
+            widgets:
+              - label:
+                  text: "\U000F075D"
+                  text_font: mdi_transport
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - homeassistant.action:
+                  action: media_player.volume_up
+                  data:
+                    entity_id: ${media_player_entity}
+
+        # ── Station browser (9 slots, adaptive layout from radio_render) ───
+        - button:
+            id: radio_btn_1
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_1
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
@@ -1147,23 +1625,23 @@ lvgl:
 
         - button:
             id: radio_btn_2
-            x: 410
-            y: 140
-            width: 370
-            height: 90
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
-            radius: 8
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_2
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
@@ -1173,23 +1651,23 @@ lvgl:
 
         - button:
             id: radio_btn_3
-            x: 20
-            y: 240
-            width: 370
-            height: 90
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
-            radius: 8
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_3
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
@@ -1199,23 +1677,23 @@ lvgl:
 
         - button:
             id: radio_btn_4
-            x: 410
-            y: 240
-            width: 370
-            height: 90
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
-            radius: 8
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_4
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
@@ -1225,23 +1703,23 @@ lvgl:
 
         - button:
             id: radio_btn_5
-            x: 20
-            y: 340
-            width: 370
-            height: 90
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
-            radius: 8
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_5
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
@@ -1251,29 +1729,161 @@ lvgl:
 
         - button:
             id: radio_btn_6
-            x: 410
-            y: 340
-            width: 370
-            height: 90
+            x: 0
+            y: 220
+            width: 246
+            height: 60
             bg_color: 0x1A237E
             bg_opa: 80%
-            radius: 8
+            radius: 6
             hidden: true
             widgets:
               - label:
                   id: radio_lbl_6
                   text: ""
-                  align: CENTER
-                  text_font: roboto24
+                  text_font: roboto18
                   text_color: 0xFFFFFF
+                  align: CENTER
                   long_mode: DOT
-                  width: 350
+                  width: 226
             on_click:
               - homeassistant.action:
                   action: ${radio_play_script}
                   data_template:
                     name: !lambda |-
                       return std::string(lv_label_get_text(id(radio_lbl_6)));
+
+        - button:
+            id: radio_btn_7
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_7
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_7)));
+
+        - button:
+            id: radio_btn_8
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_8
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_8)));
+
+        - button:
+            id: radio_btn_9
+            x: 0
+            y: 220
+            width: 246
+            height: 60
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 6
+            hidden: true
+            widgets:
+              - label:
+                  id: radio_lbl_9
+                  text: ""
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+                  long_mode: DOT
+                  width: 226
+            on_click:
+              - homeassistant.action:
+                  action: ${radio_play_script}
+                  data_template:
+                    name: !lambda |-
+                      return std::string(lv_label_get_text(id(radio_lbl_9)));
+
+        # ── Paging controls (visible only when total stations > 9) ─────────
+        - button:
+            id: radio_prev_btn
+            x: 280
+            y: 445
+            width: 90
+            height: 30
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 4
+            hidden: true
+            widgets:
+              - label:
+                  text: "Prev"
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - lambda: |-
+                  if (id(radio_page_idx) > 0) id(radio_page_idx)--;
+              - script.execute: radio_render
+
+        - label:
+            id: radio_page_label
+            x: 380
+            y: 449
+            width: 80
+            text_font: roboto18
+            text_color: 0xFFFFFF
+            text: ""
+            text_align: CENTER
+            hidden: true
+
+        - button:
+            id: radio_next_btn
+            x: 470
+            y: 445
+            width: 90
+            height: 30
+            bg_color: 0x1A237E
+            bg_opa: 80%
+            radius: 4
+            hidden: true
+            widgets:
+              - label:
+                  text: "Next"
+                  text_font: roboto18
+                  text_color: 0xFFFFFF
+                  align: CENTER
+            on_click:
+              - lambda: |-
+                  id(radio_page_idx)++;
+              - script.execute: radio_render
 
     # =========================================================================
     # LIGHTS PAGE
